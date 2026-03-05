@@ -26,7 +26,7 @@ async fn main() {
     env_logger::init();
     
     // 配置代理服务器
-    let addr: SocketAddr = ([127, 0, 0, 1], 8080).into();
+    let addr: SocketAddr = ([127, 0, 0, 1], 9999).into();
     
     info!("Starting proxy server on {}", addr);
     info!("Target server: {}", target_server);
@@ -60,6 +60,11 @@ async fn main() {
 
 async fn proxy_handler(client: Client<hyper::client::HttpConnector>, req: Request<Body>, target_server: &str) -> Result<Response<Body>, Infallible> {
     info!("Received request: {} {}/{}", req.method(), target_server, req.uri().path_and_query().map(|p| p.as_str()).unwrap_or(""));
+    
+    // 处理 OPTIONS 预检请求
+    if req.method() == hyper::Method::OPTIONS {
+        return Ok(build_cors_options_response());
+    }
     
     // 构建目标URI
     let target_uri = match build_target_uri(target_server, req.uri()) {
@@ -98,8 +103,10 @@ async fn proxy_handler(client: Client<hyper::client::HttpConnector>, req: Reques
     
     // 发送请求到目标服务器并获取响应
     match client.request(request).await {
-        Ok(response) => {
+        Ok(mut response) => {
             info!("Received response: {}", response.status());
+            // 添加 CORS 头
+            add_cors_headers(&mut response);
             Ok(response)
         },
         Err(e) => {
@@ -124,5 +131,25 @@ fn build_error_response(status: u16, message: &str) -> Response<Body> {
     Response::builder()
         .status(status)
         .body(Body::from(message.to_string()))
+        .unwrap()
+}
+
+fn add_cors_headers(response: &mut Response<Body>) {
+    let headers = response.headers_mut();
+    headers.insert("Access-Control-Allow-Origin", "*".parse().unwrap());
+    headers.insert("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH".parse().unwrap());
+    headers.insert("Access-Control-Allow-Headers", "*".parse().unwrap());
+    headers.insert("Access-Control-Max-Age", "86400".parse().unwrap());
+}
+
+fn build_cors_options_response() -> Response<Body> {
+    Response::builder()
+        .status(200)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
+        .header("Access-Control-Allow-Headers", "*")
+        .header("Access-Control-Max-Age", "86400")
+        .header("Content-Length", "0")
+        .body(Body::empty())
         .unwrap()
 }
